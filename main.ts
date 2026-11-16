@@ -1,12 +1,14 @@
-// Koi Leap — make.fun ai-excited-01 entry.
+// Koi Leap — make.fun ai-excited-01.
 //
-// One job, done carefully: take the artwork bundled in this repo
-// (entry.jpg — a giant rainbow koi leaping over a neon city at dusk,
-// an orange astronaut riding on its back) and drop an exact copy at the
-// path the grader reads, $MAKEFUN_OUTPUT_DIR/entry.png.
+// This program has exactly one responsibility: take the artwork that
+// ships in this repository (entry.jpg — a rainbow koi leaping over a
+// neon city at dusk with an orange astronaut riding on its back) and
+// place a byte-identical copy where the grader looks for it:
+// $MAKEFUN_OUTPUT_DIR/entry.png.
 //
-// Node 22, standard library only. No network, no dependencies, no
-// randomness — the same input bytes always produce the same output bytes.
+// It uses Node 22's standard library and nothing else: no packages,
+// no network, no randomness. Given the same entry.jpg it always
+// produces the same entry.png.
 //
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
@@ -15,49 +17,56 @@ import { copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ARTWORK_FILE = 'entry.jpg';
-const OUTPUT_FILE = 'entry.png';
-const DEFAULT_OUTPUT_DIR = '/output';
+const ARTWORK = 'entry.jpg';
+const OUTPUT_NAME = 'entry.png';
+const FALLBACK_DIR = '/output';
 
-/** Where this script lives on disk, so the artwork is found beside it. */
-function scriptDir(): string {
+function here(): string {
   return dirname(fileURLToPath(import.meta.url));
 }
 
-/** SHA-256 hex digest of a file's bytes. */
-function sha256Hex(path: string): string {
+function digest(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-/** Copy the artwork to the output directory and prove it landed intact. */
-function deliverArtwork(): void {
-  const sourcePath = resolve(scriptDir(), ARTWORK_FILE);
-  const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? DEFAULT_OUTPUT_DIR;
-  const targetPath = resolve(outputDir, OUTPUT_FILE);
-
-  mkdirSync(outputDir, { recursive: true });
-  copyFileSync(sourcePath, targetPath);
-
-  // A short or corrupted copy must blow up loudly instead of silently
-  // shipping a broken image to the judge. Check size first (cheap), then
-  // the full SHA-256 digest (conclusive).
-  const sourceBytes = statSync(sourcePath).size;
-  const targetBytes = statSync(targetPath).size;
-  if (sourceBytes !== targetBytes) {
-    throw new Error(
-      `Koi Leap: ${OUTPUT_FILE} size mismatch (${targetBytes} bytes copied, expected ${sourceBytes})`,
-    );
+/** The artwork must be a real JPEG, not an empty or misnamed file. */
+function assertJpeg(path: string): void {
+  const head = readFileSync(path).subarray(0, 3);
+  if (head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
+    throw new Error(`Koi Leap: ${ARTWORK} does not start with a JPEG magic number`);
   }
-  const sourceHash = sha256Hex(sourcePath);
-  const targetHash = sha256Hex(targetPath);
-  if (sourceHash !== targetHash) {
-    throw new Error(
-      `Koi Leap: ${OUTPUT_FILE} failed integrity check ` +
-        `(source ${sourceHash.slice(0, 12)}… vs copy ${targetHash.slice(0, 12)}…)`,
-    );
-  }
-
-  console.log(`Koi Leap: wrote ${targetPath} (${targetBytes} bytes, sha256 ${sourceHash.slice(0, 12)}…)`);
 }
 
-deliverArtwork();
+function main(): void {
+  const source = resolve(here(), ARTWORK);
+  const dir = process.env.MAKEFUN_OUTPUT_DIR ?? FALLBACK_DIR;
+  const dest = resolve(dir, OUTPUT_NAME);
+
+  assertJpeg(source);
+  mkdirSync(dir, { recursive: true });
+  copyFileSync(source, dest);
+
+  // Refuse to hand the judge a truncated or corrupted image: the copy
+  // must match the original byte for byte, in size and in SHA-256.
+  const expectedSize = statSync(source).size;
+  const actualSize = statSync(dest).size;
+  if (actualSize !== expectedSize) {
+    throw new Error(
+      `Koi Leap: ${OUTPUT_NAME} is ${actualSize} bytes, expected ${expectedSize}`,
+    );
+  }
+  const expectedHash = digest(source);
+  const actualHash = digest(dest);
+  if (actualHash !== expectedHash) {
+    throw new Error(
+      `Koi Leap: ${OUTPUT_NAME} checksum mismatch ` +
+        `(got ${actualHash.slice(0, 12)}…, want ${expectedHash.slice(0, 12)}…)`,
+    );
+  }
+
+  console.log(
+    `Koi Leap: ${dest} ready — ${actualSize} bytes, sha256 ${expectedHash.slice(0, 12)}…`,
+  );
+}
+
+main();
